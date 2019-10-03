@@ -1,8 +1,11 @@
 import higlass as hg
 from IPython.display import display
+from matplotlib.cm import get_cmap
 
 from .tilesets import Hgmc1dData
-from .utils import enable_selection, get_anchor
+from .utils import get_selection_widgets, link_selection_widgets, get_anchor
+
+cmap = get_cmap("cool")
 
 BAR_TRACK_CONFIG = {
     "uid": "bars",
@@ -10,30 +13,46 @@ BAR_TRACK_CONFIG = {
     "position": "top",
     "height": 128,
     "options": {
-        "colorRange": ["#ffbb33", "#e5001c", "black"],
+        "colorRange": ["#ffffe0", "#0000bf"],
         "labelColor": "black",
         "backgroundColor": "white",
     },
 }
 
-ANCHORS_TRACK_CONFIG = {
-    "uid": "anchors",
-    "track_type": "horizontal-bar",
-    "position": "top",
-    "height": 128,
-    "options": {
-        "colorRange": ["#ffbb33", "#e5001c", "black"],
-        "labelColor": "black",
-        "backgroundColor": "white",
-    },
+ANCHORS_OPTIONS = {
+    "fillColor": "orange",
+    "fillOpacity": 1,
+    "outline": "white",
+    "outlineWidth": 1,
+    "outlinePos": ["left", "right"],
 }
+
+NEW_ANCHORS_OPTIONS = {
+    "fillOpacity": 0,
+    "stroke": "orange",
+    "strokeWidth": 2,
+    "strokePos": ["top", "left", "right"],
+    "outline": "white",
+    "outlineWidth": 1,
+    "outlinePos": ["left", "right"],
+}
+
+
+def get_higlass_widget(mc_level):
+    higlass, _, _ = hg.display(mc_level.higlass_views, no_fuse=True)
+
+    link_selection_widgets(
+        higlass, mc_level.select_mode, mc_level.x_from, mc_level.x_to
+    )
+
+    return higlass
 
 
 class McLevel:
-    def __init__(self, tileset, higlass, x_from, x_to, select_mode, anchor=None):
+    def __init__(self, tileset, higlass_views, x_from, x_to, select_mode, anchor=None):
         self.tileset = tileset
         self.anchor = anchor
-        self.higlass = higlass
+        self.higlass_views = higlass_views
         self.x_from = x_from
         self.x_to = x_to
         self.select_mode = select_mode
@@ -55,7 +74,23 @@ class Hgmc1d:
         self.axis = hg.Track("top-axis", uid="axis")
         self.levels = []
 
-        self.init()
+        higlass_views = [
+            hg.View(
+                [self.axis, hg.Track(tileset=self.base_tileset, **BAR_TRACK_CONFIG)]
+            )
+        ]
+
+        select_mode, x_from, x_to = get_selection_widgets()
+
+        self.levels.append(
+            McLevel(
+                tileset=self.base_tileset,
+                higlass_views=higlass_views,
+                select_mode=select_mode,
+                x_from=x_from,
+                x_to=x_to,
+            )
+        )
 
     @property
     def level(self):
@@ -82,22 +117,97 @@ class Hgmc1d:
                 )
         return anchor_regions
 
-    def show(self, level: int = None):
+    def show_all_levels(self):
+        tracks = [self.axis]
+        overlays = []
+        curr_anchors = []
+
+        for index, level in enumerate(self.levels):
+
+            uid = "bars-{}".format(index)
+
+            tracks.append(
+                hg.Track(
+                    tileset=level.tileset,
+                    **{**BAR_TRACK_CONFIG, **{"uid": uid, "height": 36}}
+                )
+            )
+
+            if level.anchor is not None:
+                new_anchor = [
+                    level.anchor - self.ignored_anchor_padding,
+                    level.anchor + self.ignored_anchor_padding + 1,
+                ]
+                overlays.append(
+                    {
+                        "uid": "overlays-{}-new".format(index),
+                        "includes": ["bars-{}".format(index - 1)],
+                        "options": {**{"extent": [new_anchor]}, **NEW_ANCHORS_OPTIONS},
+                    }
+                )
+                curr_anchors.append(new_anchor)
+                if len(curr_anchors):
+                    overlays.append(
+                        {
+                            "uid": "overlays-{}-prev".format(index),
+                            "includes": [uid],
+                            "options": {
+                                **{"extent": curr_anchors.copy()},
+                                **ANCHORS_OPTIONS,
+                            },
+                        }
+                    )
+            else:
+                overlays.append(
+                    {
+                        "uid": "overlays-{}".format(index),
+                        "includes": ["axis"],
+                        "options": {
+                            **{
+                                "extent": self.get_anchor_regions([level.anchor]),
+                                "minWidth": 4,
+                            },
+                            **ANCHORS_OPTIONS,
+                        },
+                    }
+                )
+
+        higlass, _, _ = hg.display([hg.View(tracks, overlays=overlays)], no_fuse=True)
+
+        display(higlass)
+
+    def show_current_level(self):
+        level = self.level
+
+        mc_level = self.levels[level]
+
+        higlass = get_higlass_widget(mc_level)
+
+        display(mc_level.select_mode, higlass, mc_level.x_from, mc_level.x_to)
+
+    def show(self, level: int = None, all: bool = False):
+        if all:
+            self.show_all_levels()
+            return
+
         if level is None:
-            level = self.level
+            self.show_current_level()
+            return
 
         level = max(0, min(self.level + 1, level))
 
-        try:
-            mc_level = self.levels[level]
-        except IndexError:
-            mc_level = self.next_level()
+        if level > self.level:
+            self.show_next_level()
 
-        display(mc_level.select_mode, mc_level.higlass, mc_level.x_from, mc_level.x_to)
+        mc_level = self.levels[level]
+
+        higlass = get_higlass_widget(mc_level)
+
+        display(mc_level.select_mode, higlass, mc_level.x_from, mc_level.x_to)
 
     def show_next_level(self):
         self.next_level()
-        self.show()
+        self.show_current_level()
 
     def next_level(self):
         current_mc_level = self.levels[self.level]
@@ -116,27 +226,23 @@ class Hgmc1d:
         overlays = [
             {
                 "includes": ["axis", "bars"],
-                "options": {"extent": overlays, "minWidth": 6},
+                "options": {**{"extent": overlays, "minWidth": 4}, **ANCHORS_OPTIONS},
             }
         ]
 
-        print(overlays)
+        higlass_views = [
+            hg.View(
+                [self.axis, hg.Track(tileset=tileset, **BAR_TRACK_CONFIG)],
+                overlays=overlays,
+            )
+        ]
 
-        higlass, _, _ = hg.display(
-            [
-                hg.View(
-                    [self.axis, hg.Track(tileset=tileset, **BAR_TRACK_CONFIG)],
-                    overlays=overlays,
-                )
-            ]
-        )
-
-        select_mode, x_from, x_to = enable_selection(higlass)
+        select_mode, x_from, x_to = get_selection_widgets()
 
         next_mc_level = McLevel(
             anchor=anchor,
             tileset=tileset,
-            higlass=higlass,
+            higlass_views=higlass_views,
             select_mode=select_mode,
             x_from=x_from,
             x_to=x_to,
@@ -146,28 +252,8 @@ class Hgmc1d:
 
         return next_mc_level
 
-    def init(self):
-        if self.level > -1:
-            return
+    def reset(self):
+        while len(self.levels) > 1:
+            self.levels.pop()
 
-        print
-
-        higlass, _, _ = hg.display(
-            [
-                hg.View(
-                    [self.axis, hg.Track(tileset=self.base_tileset, **BAR_TRACK_CONFIG)]
-                )
-            ]
-        )
-
-        select_mode, x_from, x_to = enable_selection(higlass)
-
-        self.levels.append(
-            McLevel(
-                tileset=self.base_tileset,
-                higlass=higlass,
-                select_mode=select_mode,
-                x_from=x_from,
-                x_to=x_to,
-            )
-        )
+        self.data.remove_anchors()
