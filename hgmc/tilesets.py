@@ -225,11 +225,8 @@ class Hgmc1dData:
 
     def remove_anchors(self, *anchors):
         if len(anchors) == 0:
-            try:
-                self.anchors.pop()
-                self.filter_masks.pop()
-            except IndexError:
-                pass
+            self.anchors = []
+            self.filter_masks = [self.get_filter_mask()]
 
         for anchor in anchors:
             anchor, _, _ = self.get_anchor(anchor)
