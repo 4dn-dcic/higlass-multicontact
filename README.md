@@ -34,3 +34,24 @@ Finally, start Jupyterlab:
 ```
 jupyter-lab
 ```
+
+## Development
+
+Clone higlass-python and higlass
+
+```bash
+git clone https://github.com/higlass/higlass
+git clone https://github.com/higlass/higlass-python
+```
+
+Go to `higlass-python/js` and change the HiGlass dependency to `"higlass": "file:/absolute/path/to/higlass"` where `/absolute/path/to/higlass` should point to the directory you clone higlass into.
+
+Finally, go to higlass-multicontact and activate its conda environment to do
+
+```
+jupyter labextension install ../path/to/higlass-python/js
+```
+
+After you have changed code in higlass you need to separately build higlass using `npm run build`.
+
+After you have change code in higlass-jupyter you have to reinstall the labextension.
