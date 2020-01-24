@@ -122,12 +122,16 @@ def sql_coverage(
     # If true, `count_at_feat_cov` represents the percentage of the feature size
     # that needs to be in the bin for the feature to count
     rel_count_at_feat_cov: bool = False,
-    # Number of bins that need to be cover by the feature for the feature
+    # Number of bp that need to be cover by the feature for the feature
     # to count
     count_at_bin_cov: int = None,
      # If true, `count_at_bin_cov` represents the percentage of the bin size
      # that needs to be cover by the feature for the feature to count
     rel_count_at_bin_cov: bool = False,
+    # By default, if `count_at_feat_cov` and `count_at_bin_cov` are specified
+    # both conditions need to be fulfilled. If `feat_or_bin_cov` is true it's
+    # enough that one is fulfilled
+    feat_or_bin_cov: bool = False,
     timeit: bool = False,
     verbose: bool = False
 ):
@@ -219,6 +223,12 @@ def sql_coverage(
                     if count_at_feat_cov:
                         threshold = rel_count_at_feat_cov * count_at_feat_cov * feat_size or count_at_feat_cov
                         should_count = feat_coverage >= threshold
+                        if feat_or_bin_cov:
+                            if should_count:
+                                count += 1
+                                continue
+                            else:
+                                should_count = True
 
                     if should_count and count_at_bin_cov:
                         threshold = rel_count_at_bin_cov * count_at_bin_cov * bin_size or count_at_bin_cov
