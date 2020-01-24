@@ -178,7 +178,6 @@ def verify_queried_clusters(
     return True
 
 
-
 def query_by_features(
     h5,
     query: list = [],
@@ -305,13 +304,16 @@ def clusters_to_bins(h5, clusters, timeit: bool = False):
 
     num_clusters = h5['cluster_props'].shape[0]
 
-    cluster_mask = np.zeros(num_clusters + 1).astype(bool)
+    cluster_mask = clusters
 
-    t1 = time.time()
-    if timeit:
-        print(f'Mask generation took {t1-t0:.1f} sec')
+    if clusters.dtype != np.dtype('bool'):
+        cluster_mask = np.zeros(num_clusters + 1).astype(bool)
 
-    cluster_mask[clusters] = True
+        t1 = time.time()
+        if timeit:
+            print(f'Mask generation took {t1-t0:.1f} sec')
+
+        cluster_mask[clusters] = True
 
     cluster_starts = h5['cluster_offset'][cluster_mask]
     cluster_stops = h5['cluster_offset'][np.roll(cluster_mask, 1)]
@@ -326,7 +328,7 @@ def clusters_to_bins(h5, clusters, timeit: bool = False):
     if timeit:
         print(f'Vrange calculation took {t3-t2:.1f} sec')
 
-    cluster_to_bin = h5['cluster_to_bin'][:, 1]
+    cluster_to_bin = h5['cluster_to_bin'][:]
 
     t4 = time.time()
     if timeit:
@@ -339,4 +341,175 @@ def clusters_to_bins(h5, clusters, timeit: bool = False):
         print(f'Bin extraction took {t5-t4:.1f} sec')
         print(f'Total took {t5-t0:.1f} sec')
 
-    return np.unique(bins)
+    return bins
+
+
+def bins_to_cluster_mask(h5, bins):
+    num_bins = h5['bin_offset'].size - 1
+    num_clusters = h5['cluster_props'].shape[0]
+
+    bin_mask = np.zeros(num_bins + 1).astype(bool)
+    bin_mask[bins] = True
+    cluster_mask = np.zeros(num_clusters + 1).astype(bool)
+
+    bin_starts = h5['bin_offset'][bin_mask]
+    bin_stops = h5['bin_offset'][np.roll(bin_mask, 1)]
+
+    bin_to_cluster = h5['bin_to_cluster'][:, 1]
+
+    for i, start in enumerate(bin_starts):
+        stop = bin_stops[i]
+        cluster_mask[bin_to_cluster[start:stop]] = True
+
+    return cluster_mask
+
+def bins_to_clusters(*args):
+    return np.where(bins_to_cluster_mask(*args))[0]
+
+
+def clusters_to_unique_bins(*args, **kwargs):
+    return np.unique(clusters_to_bins(*args, **kwargs)[:,1])
+
+
+# def feature_support(h5, features):
+#     # 1. Feature > bin mask
+#     # 2. bin mask > clusters
+#     # 3. clusters > frequency
+
+def support(h5, query):
+    clusters = query_by_features(h5, query)
+    cluster_freqs = h5['cluster_props'][:, 0]
+
+    N = cluster_freqs.sum()
+    count = cluster_freqs.size * cluster_freqs[clusters].sum()
+
+    return (count / N, count)
+
+
+def cross_support(support_count):
+    return support_count.min() / support_count.max()
+
+
+def cluster_cross_support(h5, clusters):
+    cluster_freqs = h5['cluster_props'][:, 0][clusters]
+    return cross_support(cluster_freqs)
+
+
+def query_cross_support(h5, query, feature_freq):
+    support_count = np.zeros(len(query)).astype(np.uint32)
+
+    for i, q in enumerate(query):
+        count, _ = support(h5, q)
+        support_count[i] = count
+
+    return cross_support(support_count)
+
+
+def lift(h5):
+    return None
+
+
+def confidence():
+    return None
+
+
+def shannon_entropy(rel_feature_counts):
+    log2_rel_counts = np.log2(
+        rel_feature_counts,
+        out=np.zeros_like(rel_feature_counts),
+        where=rel_feature_counts!=0
+    )
+    return -(rel_feature_counts * log2_rel_counts).sum(axis=0)
+
+
+def information_content(rel_feature_counts, cluster_counts):
+    # Number of feature states
+    s, _ = rel_feature_counts.shape
+
+    # Small sample correction
+    e = 1 / np.log(2) * np.divide(
+        s - 1,
+        2 * cluster_counts,
+        out=np.zeros_like(cluster_counts),
+        where=cluster_counts!=0
+    ).mean()
+
+    return np.log2(s) - (shannon_entropy(rel_feature_counts) + e)
+
+
+def contact_feature_logo(h5, feature, verbose: bool = False):
+    t0 = time.time()
+
+    num_states, num_bins = feature.shape
+
+    bin_offset = h5['bin_offset'][:]
+    cluster_offset = h5['cluster_offset'][:]
+    bin_to_cluster = h5['bin_to_cluster'][:, 1]
+    cluster_to_bin = h5['cluster_to_bin'][:, 1]
+
+    num_bins = bin_offset.size - 1
+    num_clusters = cluster_offset.size - 1
+
+    bin_counts = np.zeros(num_bins + 1).astype(np.uint32)
+    cluster_mask = np.zeros(num_clusters + 1).astype(bool)
+
+    feature_counts = np.zeros((num_states, num_bins))
+    num_clusters_per_bin = np.zeros(num_bins)
+
+    if verbose:
+        print(f'Initialization took {(time.time() - t0):.2f} sec')
+
+    steps = 100
+    dt = np.zeros(steps)
+    for i, bin in enumerate(np.arange(num_bins)):
+        t1 = time.time()
+
+        # 0. Reset cluster mask
+        cluster_mask[cluster_mask] = False
+
+        # Get the states for bins that are in contact with this bin
+        # 1. Get the clusters at this bin
+        bin_start = bin_offset[bin]
+        bin_stop = bin_offset[bin + 1]
+        num_clusters_per_bin[bin] = bin_stop - bin_start
+
+        cluster_mask[bin_to_cluster[bin_start:bin_stop]] = True
+
+        # 2. Get cluster bins
+        cluster_starts = cluster_offset[cluster_mask]
+        cluster_stops = cluster_offset[np.roll(cluster_mask, 1)]
+
+        ranges = vrange(cluster_starts, cluster_stops, np.uint64)
+
+        cluster_bins = cluster_to_bin[ranges]
+
+        # 3. Count appearance of cluster bins
+        unique_bins, bin_counts = np.unique(cluster_bins, return_counts=True)
+        # Remove the current bin as we only want to count other bins that are
+        # in contact with the current bin
+        bin_counts[unique_bins == bin] = 0
+
+        # 4. Get the feature counts across the cluster bins
+        feature_counts[:, bin] = (
+            feature[:, unique_bins] * bin_counts
+        ).sum(axis=1)
+
+        dt[i % steps] = time.time() - t1
+
+        if verbose and i % steps == steps - 1:
+            print(f'The last {steps} steps took {dt.sum():.1f} sec')
+
+    total_feature_counts = feature_counts.sum(axis=0)
+    rel_feature_counts = np.divide(
+        feature_counts,
+        total_feature_counts,
+        out=np.zeros_like(feature_counts),
+        where=total_feature_counts != 0
+    )
+
+    r = information_content(rel_feature_counts, num_clusters_per_bin)
+
+    if verbose:
+        print(f'Total logo computation took {((time.time() - t0) / 60):.2f} min')
+
+    return rel_feature_counts * r
