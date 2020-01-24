@@ -5,3 +5,4 @@ __pycache__
 data/*
 *.sublime-workspace
 *.sublime-project
+*higlass-python.log
