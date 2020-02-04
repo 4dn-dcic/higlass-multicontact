@@ -13,6 +13,7 @@ def tsv_to_h5(
     chrom_sizes_filepath: str,
     chrom: str,
     bin_size: int,
+    cluster_size: int = 3,
     header: bool = False,
     timeit: bool = False,
     verbose: bool = False
@@ -45,9 +46,9 @@ def tsv_to_h5(
             if verbose:
                 print(f'File contains {num_lines} clusters')
 
-            cluster_to_bin = np.zeros((num_lines * 3, 2)).astype(np.uint32)
-            cluster_to_bin[:, 0] = np.repeat(np.arange(num_lines), 3)
-            cluster_offset = np.arange(0, (num_lines + 1) * 3, 3).astype(np.uint32)
+            cluster_to_bin = np.zeros((num_lines * cluster_size, 2)).astype(np.uint32)
+            cluster_to_bin[:, 0] = np.repeat(np.arange(num_lines), cluster_size)
+            cluster_offset = np.arange(0, (num_lines + 1) * cluster_size, cluster_size).astype(np.uint32)
             cluster_props = np.zeros((num_lines, 2)).astype(np.uint32) # frequency, span
 
             tsv.seek(0)
@@ -57,16 +58,17 @@ def tsv_to_h5(
 
             i = 0
             for line in tsv:
-                chr_a, pos_a, chr_b, pos_b, chr_c, pos_c, freq, _ = line.split('\t')
+                # Expects:
+                # chr1, pos1, chr2, pos2, chr3, pos3, ..., freq
+                cols = line.strip().split('\t')
 
                 # Add bins
-                cluster_to_bin[i * 3 + 0, 1] = np.uint32(pos_a) / bin_size
-                cluster_to_bin[i * 3 + 1, 1] = np.uint32(pos_b) / bin_size
-                cluster_to_bin[i * 3 + 2, 1] = np.uint32(pos_c) / bin_size
+                for j in range(cluster_size):
+                    cluster_to_bin[i * cluster_size + j, 1] = np.uint32(cols[j * 2 + 1]) / bin_size
 
                 # Add props
-                cluster_props[i, 0] = np.uint32(freq)
-                cluster_props[i, 1] = np.uint32(pos_c) - np.uint32(pos_a)
+                cluster_props[i, 0] = np.uint32(cols[cluster_size * 2]) # frequency
+                cluster_props[i, 1] = np.uint32(cols[cluster_size * 2 - 1]) - np.uint32(cols[1]) # span
 
                 i += 1
 
@@ -445,12 +447,13 @@ def contact_feature_logo(h5, feature, verbose: bool = False):
     bin_offset = h5['bin_offset'][:]
     cluster_offset = h5['cluster_offset'][:]
     bin_to_cluster = h5['bin_to_cluster'][:, 1]
-    cluster_to_bin = h5['cluster_to_bin'][:, 1]
+    cluster_to_bin = h5['cluster_to_bin'][:]
+    cluster_freq = h5['cluster_props'][:, 0]
 
     num_bins = bin_offset.size - 1
     num_clusters = cluster_offset.size - 1
 
-    bin_counts = np.zeros(num_bins + 1).astype(np.uint32)
+    bin_counts = np.zeros(num_bins).astype(np.uint32)
     cluster_mask = np.zeros(num_clusters + 1).astype(bool)
 
     feature_counts = np.zeros((num_states, num_bins))
@@ -483,16 +486,24 @@ def contact_feature_logo(h5, feature, verbose: bool = False):
 
         cluster_bins = cluster_to_bin[ranges]
 
+        # Unset previous counts
+        bin_counts[bin_counts > 0] = 0
+
         # 3. Count appearance of cluster bins
-        unique_bins, bin_counts = np.unique(cluster_bins, return_counts=True)
+        for cb in cluster_bins:
+            cluster_id, cluster_bin = cb
+            bin_counts[cluster_bin] += cluster_freq[cluster_id]
+
+        # # 3. Count appearance of cluster bins
+        # unique_bins, bin_counts = np.unique(cluster_bins, return_counts=True)
+
         # Remove the current bin as we only want to count other bins that are
         # in contact with the current bin
-        bin_counts[unique_bins == bin] = 0
+        # bin_counts[unique_bins == bin] = 0
+        bin_counts[bin] = 0
 
         # 4. Get the feature counts across the cluster bins
-        feature_counts[:, bin] = (
-            feature[:, unique_bins] * bin_counts
-        ).sum(axis=1)
+        feature_counts[:, bin] = (feature * bin_counts).sum(axis=1)
 
         dt[i % steps] = time.time() - t1
 
