@@ -4,7 +4,19 @@ from matplotlib import pyplot as plt
 
 from .clusters import bins_to_cluster_mask, clusters_to_bins
 
-def plot_distribution(Y, labels, Y_comparison = None):
+def plot_distribution(
+    Y,
+    labels = None,
+    Y_comp = None,
+    colors = None,
+    figsize: tuple = (12, 8),
+    title: str = None,
+    ylim: tuple = None,
+    yticks = None,
+    primary_label: str = None,
+    comparison_label: str = None
+):
+    Y = np.asarray(Y)
     num_features = Y.size
 
     X = np.arange(num_features)
@@ -15,46 +27,72 @@ def plot_distribution(Y, labels, Y_comparison = None):
     color_primary = '#00abff'
     color_secondary = '#000000'
 
+    has_comp = Y_comp is not None
+
     fig, ax = plt.subplots(
-        nrows=2 if Y_comparison is not None else 1,
+        nrows=2 if has_comp else 1,
         ncols=1,
-        figsize=(12, 8),
+        figsize=figsize,
         sharex=True,
+        gridspec_kw=dict(
+            height_ratios=([1] + [0.5] * has_comp),
+            hspace=0.25
+        )
     )
-    ax[0].bar(
+
+    curr_ax = ax[0] if Y_comp is not None else ax
+
+    curr_ax.bar(
         X,
         Y,
         width=width_primary,
-        color=color_primary,
-        label='Selected cluster bins'
+        color=colors if colors is not None else color_primary,
+        label=primary_label if primary_label is not None else 'Found cluster bins'
     )
-    if Y_comparison is not None:
-        ax[0].bar(
+    if Y_comp is not None:
+        Y_comp = np.asarray(Y_comp)
+        curr_ax.bar(
             X + (width_primary / 2) - (width_secondary / 2),
-            Y_comparison,
+            Y_comp,
             width=width_secondary,
             color=color_secondary,
             alpha=0.33,
-            label='All cluster bins'
+            label=comparison_label if comparison_label is not None else 'Overlapping cluster bins'
         )
-        ax[0].legend()
+        curr_ax.legend()
 
-    ax[0].set_title('Absolute Feature Counts by Clusters by Bins')
-    ax[0].set_xticks(X)
-    ax[0].set_xticklabels(labels)
+    if title is not None:
+        curr_ax.set_title(title)
+    else:
+        curr_ax.set_title('Absolute Feature Counts by Clusters by Bins')
+    curr_ax.set_xticks(X)
+    if labels is not None:
+        curr_ax.set_xticklabels(labels)
+    if ylim is not None:
+        curr_ax.set_ylim(*ylim)
+    if yticks is not None:
+        curr_ax.set_yticks(yticks)
 
-    if Y_comparison is not None:
+    curr_ax.spines['top'].set_visible(False)
+    curr_ax.spines['left'].set_visible(False)
+    curr_ax.spines['right'].set_visible(False)
+
+    if Y_comp is not None:
+        Y_comp = np.asarray(Y_comp)
         ax[1].bar(
             X,
-            Y / Y_comparison,
+            np.divide(Y, Y_comp, out=np.zeros_like(Y).astype(float), where=Y_comp!=0),
             width=width_primary,
-            color=color_primary,
+            color=colors if colors is not None else color_primary,
         )
 
         ax[1].set_title('Relative Feature Coverage')
+        ax[1].spines['top'].set_visible(False)
+        ax[1].spines['left'].set_visible(False)
+        ax[1].spines['right'].set_visible(False)
 
 
-def plot_cluster_feature_distribution(h5, clusters_bins, features):
+def plot_cluster_feature_distribution(h5, clusters_bins, features, figsize: tuple = (12, 8)):
     num_features = len(features)
     counts = np.zeros(num_features).astype(np.uint32)
     counts_all_clusters = np.zeros(num_features).astype(np.uint32)
@@ -82,7 +120,7 @@ def plot_cluster_feature_distribution(h5, clusters_bins, features):
             mask.astype(bool)[all_bins] * all_cluster_freqs
         )
 
-    plot_distribution(counts, labels, Y_comparison=counts_all_clusters)
+    plot_distribution(counts, labels, Y_comp=counts_all_clusters, figsize=figsize)
 
 
 def plot_contact_logo(
