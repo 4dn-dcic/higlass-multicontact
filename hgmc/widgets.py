@@ -117,7 +117,7 @@ class Hgmc1d:
                 )
         return anchor_regions
 
-    def show_all_levels(self):
+    def show_all_levels(self, track_height: int = 36):
         tracks = [self.axis]
         overlays = []
         curr_anchors = []
@@ -129,7 +129,7 @@ class Hgmc1d:
             tracks.append(
                 hg.Track(
                     tileset=level.tileset,
-                    **{**BAR_TRACK_CONFIG, **{"uid": uid, "height": 36}}
+                    **{**BAR_TRACK_CONFIG, **{"uid": uid, "height": track_height}}
                 )
             )
 
